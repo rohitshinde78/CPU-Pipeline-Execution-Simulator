@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CPU Pipeline Execution Simulator: Stages, Hazards and Stalls</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>CPU Pipeline Execution Simulator</h1>
+  <p>Stages, Hazards and Stalls: watch instructions overlap, collide and wait.</p>
+</header>
+
+<main>
+  <section class="panel" aria-labelledby="demoH">
+    <h2 id="demoH">Sample demos</h2>
+    <div id="demoBtns" class="row"></div>
+    <p id="demoInfo" class="hint">Pick a demo to load a program and the best settings for it.</p>
+  </section>
+
+  <div class="layout">
+    <aside>
+      <section class="panel">
+        <h2>Instruction editor</h2>
+        <textarea id="code" rows="11" spellcheck="false" aria-label="Instruction editor"></textarea>
+        <p class="hint">One instruction per line. Labels end with a colon (<code>loop:</code>). Comments start with <code>#</code>.<br>
+          Formats: <code>ADD R1, R2, R3</code> &middot; <code>ADDI R1, R0, 5</code> &middot; <code>LW R1, 4(R2)</code> &middot; <code>SW R1, 4(R2)</code> &middot; <code>BEQ R1, R2, label</code> &middot; <code>NOP</code>. Registers: R0 to R15 (R0 is always 0).</p>
+        <div id="errors" role="alert" aria-live="polite"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Configuration</h2>
+        <label>Pipeline stages
+          <select id="stages">
+            <option value="3">3 (IF, EX, WB)</option>
+            <option value="4">4 (IF, ID, EX, WB)</option>
+            <option value="5" selected>5 (IF, ID, EX, MEM, WB)</option>
+            <option value="6">6 (IF, ID, EX1, EX2, MEM, WB)</option>
+            <option value="7">7 (IF1, IF2, ID, EX, MEM1, MEM2, WB)</option>
+          </select></label>
+        <label class="check"><input type="checkbox" id="forward" checked> Forwarding (bypassing) ON</label>
+        <label class="check"><input type="checkbox" id="autoStall" checked> Automatic stall insertion ON</label>
+        <label class="check"><input type="checkbox" id="sharedMem"> Single shared memory (structural hazard)</label>
+        <label>Branch handling
+          <select id="branch">
+            <option value="stall">Stall until branch is resolved</option>
+            <option value="nottaken" selected>Predict not taken</option>
+            <option value="taken">Predict taken</option>
+          </select></label>
+        <label>Auto-run speed
+          <select id="speed">
+            <option value="1500">Slow</option>
+            <option value="800" selected>Normal</option>
+            <option value="300">Fast</option>
+          </select></label>
+      </section>
+
+      <section class="panel">
+        <h2>Supported instructions</h2>
+        <p class="hint">Untick an instruction to make it illegal in the editor.</p>
+        <div id="opsList" class="ops"></div>
+      </section>
+    </aside>
+
+    <div class="content">
+      <section class="panel">
+        <h2>Controls</h2>
+        <div class="row" id="controls">
+          <button id="bStart" class="primary">Start</button>
+          <button id="bPrev">Previous cycle</button>
+          <button id="bNext">Next cycle</button>
+          <button id="bAuto">Run automatically</button>
+          <button id="bPause">Pause</button>
+          <button id="bResume">Resume</button>
+          <button id="bReset">Reset</button>
+        </div>
+        <p id="status" class="status" aria-live="polite">Press Start to build the simulation.</p>
+      </section>
+
+      <section class="panel">
+        <h2>Pipeline right now <span id="cycleLabel" class="tag"></span></h2>
+        <div id="pipeView" class="pipe"></div>
+        <h3>What is happening in this cycle?</h3>
+        <ul id="explain" class="explain"></ul>
+      </section>
+
+      <section class="panel">
+        <h2>Timing diagram</h2>
+        <div class="legend">
+          <span class="chip st-IF">IF</span><span class="chip st-ID">ID</span><span class="chip st-EX">EX</span><span class="chip st-MEM">MEM</span><span class="chip st-WB">WB</span>
+          <span class="chip stall">stalled (waiting)</span><span class="chip flush">wrong path (flushed)</span>
+        </div>
+        <div class="scroll" id="gridWrap"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Hazards found</h2>
+        <div id="hazards" class="hazards"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Performance</h2>
+        <div id="cards" class="cards"></div>
+        <div class="scroll" id="compare"></div>
+        <details>
+          <summary>Calculation assumptions</summary>
+          <ul class="rules">
+            <li><b>Ideal cycles</b> = n + k &minus; 1, where n = instructions that really execute and k = number of stages (no hazards at all).</li>
+            <li><b>Stall cycles</b> = total cycles &minus; ideal cycles (every extra cycle caused by data, control or structural hazards).</li>
+            <li><b>Non-pipelined model</b>: one instruction runs completely before the next starts, one cycle per stage, so cycles = n &times; k.</li>
+            <li><b>Speedup</b> = non-pipelined cycles &divide; pipelined cycles. <b>Efficiency</b> = speedup &divide; k &times; 100%.</li>
+            <li>Every stage takes exactly one cycle and the clock time is the same in both models.</li>
+            <li>Wrong-path instructions are flushed and are <i>not</i> counted as completed.</li>
+          </ul>
+        </details>
+      </section>
+
+      <section class="panel">
+        <details>
+          <summary>Rules used by the simulator</summary>
+          <ul class="rules">
+            <li><b>Register file</b>: writes happen in the first half of WB, reads in the second half of ID, so a value written in WB can be read in that same cycle.</li>
+            <li><b>Data hazard (RAW)</b>: a consumer in ID needs a register that an older instruction in a later stage has not written yet.</li>
+            <li><b>Forwarding ON</b>: an ALU result can be used right after its last execute stage; a load result right after its MEM stage. If the result is not ready yet (load-use), the pipeline stalls until it is.</li>
+            <li><b>Forwarding OFF</b>: the consumer waits in ID until the producer reaches WB.</li>
+            <li><b>Automatic stall OFF</b>: data hazards are only reported and the consumer reads an OLD value (wrong result). Control and structural hazards are still handled, because the hardware cannot skip them.</li>
+            <li><b>Stall</b>: the consumer stays in ID, earlier stages wait, and a bubble (empty slot) enters the next stage.</li>
+            <li><b>Branches</b> resolve in the last execute-start stage (EX, or EX2 for 6/7 stages). <i>Stall</i>: fetch stops until the result is known. <i>Predict not taken / taken</i>: fetch follows the guess; a wrong guess flushes the wrong-path instructions and fetch restarts the next cycle. (Predict taken assumes the target address is known at fetch.)</li>
+            <li><b>Structural hazard</b>: with a single shared memory, when a LW/SW is in MEM, no instruction can be fetched in that cycle.</li>
+            <li><b>Stage counts</b>: 3 stages merge decode and memory into EX, so no data hazards can occur. 4 stages merge MEM into EX (loads are ready after EX). 6 and 7 stages split EX / MEM / IF, so results take longer and stalls grow.</li>
+          </ul>
+        </details>
+      </section>
+    </div>
+  </div>
+</main>
+<script src="script.js"></script>
+</body>
+</html>
